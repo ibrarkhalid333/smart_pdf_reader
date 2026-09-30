@@ -144,9 +144,7 @@ class ViewerBottomToolbar extends StatelessWidget {
             ),
             Expanded(
               child: _ToolbarAction(
-                tooltip: isHighlightMode
-                    ? 'Turn off highlighting'
-                    : 'Highlight',
+                tooltip: isHighlightMode ? 'Highlight options' : 'Highlight',
                 label: 'Highlight',
                 icon: Icons.border_color_rounded,
                 selected: isHighlightMode,

@@ -26,12 +26,26 @@ class FileService {
   /// Returns all PDF files found on the device storage.
   /// Runs the heavy file-system scan in a background isolate via [compute].
   Future<List<PdfDocument>> loadAllPdfs() async {
+    final paths = await scanPdfPaths();
+    return loadPdfDocuments(paths);
+  }
+
+  /// Scans storage and returns PDF paths without opening each document.
+  Future<List<String>> scanPdfPaths() async {
     final roots = await _getSearchRoots();
     if (roots.isEmpty) return [];
 
     // Run the recursive scan off the main thread.
-    final paths = await compute(_scanDirectories, roots);
-    return _toPdfDocuments(paths);
+    return compute(_scanDirectories, roots);
+  }
+
+  /// Loads metadata for a window of already-discovered PDF paths.
+  Future<List<PdfDocument>> loadPdfDocuments(
+    List<String> paths, {
+    int startIndex = 0,
+    int? limit,
+  }) {
+    return _toPdfDocuments(paths, startIndex: startIndex, limit: limit);
   }
 
   // ─── Search roots ─────────────────────────────────────────────────────────
@@ -145,7 +159,11 @@ class FileService {
 
   // ─── Map File → PdfDocument ───────────────────────────────────────────────
 
-  Future<List<PdfDocument>> _toPdfDocuments(List<String> paths) async {
+  Future<List<PdfDocument>> _toPdfDocuments(
+    List<String> paths, {
+    int startIndex = 0,
+    int? limit,
+  }) async {
     final colors = [
       Colors.blue.shade100,
       Colors.purple.shade100,
@@ -157,9 +175,12 @@ class FileService {
     ];
 
     final documents = <PdfDocument>[];
-    for (final entry in paths.asMap().entries) {
-      final i = entry.key;
-      final path = entry.value;
+    final firstIndex = startIndex.clamp(0, paths.length).toInt();
+    final lastIndex = limit == null
+        ? paths.length
+        : (firstIndex + limit).clamp(firstIndex, paths.length).toInt();
+    for (var i = firstIndex; i < lastIndex; i++) {
+      final path = paths[i];
       final file = File(path);
       final stat = file.statSync();
 

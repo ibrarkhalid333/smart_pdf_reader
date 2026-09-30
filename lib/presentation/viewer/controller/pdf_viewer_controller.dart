@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:smart_pdf_reader/core/const/app_constants.dart';
 import 'package:smart_pdf_reader/core/database/app_database.dart';
 import 'package:smart_pdf_reader/presentation/global/controllers/global_coin_controller.dart';
+import 'package:smart_pdf_reader/presentation/viewer/models/pdf_text_markup_style.dart';
 import 'package:smart_pdf_reader/presentation/viewer/widgets/screenshot_result_sheet.dart';
 import 'package:smart_pdf_reader/presentation/viewer/models/multi_page_capture_result.dart';
 import 'package:smart_pdf_reader/theme/theme_helper.dart';
@@ -342,16 +343,30 @@ class PdfViewerController extends GetxController {
     }
   }
 
-  void addHighlight({
+  void addTextMarkup({
     required sf.PdfViewerController viewerController,
     required List<sf.PdfTextLine> lines,
     required Color color,
+    required double opacity,
+    required PdfTextMarkupStyle style,
     required VoidCallback onSelectionCleared,
   }) {
     if (lines.isEmpty) return;
     try {
-      final annotation = sf.HighlightAnnotation(textBoundsCollection: lines);
-      annotation.color = color.withValues(alpha: 0.45);
+      final sf.Annotation annotation = switch (style) {
+        PdfTextMarkupStyle.highlight => sf.HighlightAnnotation(
+          textBoundsCollection: lines,
+        ),
+        PdfTextMarkupStyle.underline => sf.UnderlineAnnotation(
+          textBoundsCollection: lines,
+        ),
+        PdfTextMarkupStyle.strikethrough => sf.StrikethroughAnnotation(
+          textBoundsCollection: lines,
+        ),
+      };
+      annotation.color = color.withValues(
+        alpha: opacity.clamp(0.1, 1.0).toDouble(),
+      );
       viewerController.addAnnotation(annotation);
       viewerController.clearSelection();
       onSelectionCleared();
@@ -595,6 +610,61 @@ class PdfViewerController extends GetxController {
   }
 
   // ── Screenshot / Gallery Save ──────────────────────────────────────────────
+
+  Future<void> captureAndSavePage({
+    required int pageNumber,
+    required Future<Uint8List?> Function() capturePage,
+  }) async {
+    if (isSaving.value) return;
+    isSaving.value = true;
+
+    try {
+      final imageBytes = await capturePage();
+      if (imageBytes == null) return;
+      await savePageToGallery(
+        imageBytes: imageBytes,
+        pageNumber: pageNumber,
+        onShare: () => shareScreenshot(imageBytes),
+      );
+    } catch (error) {
+      Get.snackbar(
+        'Save Failed',
+        error.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red.shade700,
+        colorText: Colors.white,
+      );
+    } finally {
+      isSaving.value = false;
+    }
+  }
+
+  Future<void> captureAndSaveScreenshot({
+    required Future<Uint8List?> Function() captureViewport,
+  }) async {
+    if (isSaving.value) return;
+    isSaving.value = true;
+
+    try {
+      final imageBytes = await captureViewport();
+      if (imageBytes == null) return;
+      await saveScreenshot(
+        imageBytes: imageBytes,
+        onShare: () => shareScreenshot(imageBytes),
+      );
+    } catch (error) {
+      Get.snackbar(
+        'Screenshot failed',
+        error.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red.shade700,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 3),
+      );
+    } finally {
+      isSaving.value = false;
+    }
+  }
 
   /// Saves an image to the device gallery and shows the result sheet.
   Future<void> savePageToGallery({

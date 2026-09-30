@@ -10,6 +10,7 @@ import 'package:smart_pdf_reader/core/services/external_pdf_service.dart';
 import 'package:smart_pdf_reader/core/services/permission_service.dart';
 import 'package:smart_pdf_reader/presentation/global/controllers/global_coin_controller.dart';
 import 'package:smart_pdf_reader/presentation/widgets/permission_dialog.dart';
+import 'package:smart_pdf_reader/presentation/viewer/binding/pdf_viewer_binding.dart';
 import 'package:smart_pdf_reader/presentation/viewer/screens/pdf_viewer_screen.dart';
 import 'package:smart_pdf_reader/theme/theme_helper.dart';
 
@@ -21,7 +22,11 @@ class HomeController extends GetxController {
   final RxList<PdfDocument> allPdfs = <PdfDocument>[].obs;
 
   final RxBool isLoadingAllFiles = false.obs;
+  final RxBool isLoadingMoreAllFiles = false.obs;
   final RxString loadError = ''.obs;
+
+  static const int _allFilesBatchSize = 30;
+  List<String> _allFilePaths = [];
 
   /// Guard: device storage is only scanned once per app session.
   bool _allFilesLoaded = false;
@@ -71,32 +76,53 @@ class HomeController extends GetxController {
   void fetchPdfs() {
     recentPdfs.assignAll(AppConstants.recentPdfs);
     favouritePdfs.assignAll(AppConstants.favouritePdfs);
-    if (!_allFilesLoaded) {
-      loadDevicePdfs();
-    } else {
-      _refreshRecentFromDb();
-      _refreshFavouritesFromDb();
-    }
+    _refreshRecentFromDb();
+    _refreshFavouritesFromDb();
   }
 
-  /// Scans device storage for PDF files.
+  /// Scans for PDF paths, then loads only the first batch of file metadata.
   Future<void> loadDevicePdfs({bool requestIfNeeded = false}) async {
+    if (isLoadingAllFiles.value || isLoadingMoreAllFiles.value) return;
     try {
       isLoadingAllFiles.value = true;
       loadError.value = '';
 
-      final status = await PermissionService.instance.checkStoragePermission();
+      var status = await PermissionService.instance.checkStoragePermission();
       if (!status.isGranted) {
         if (requestIfNeeded) {
           await _requestStoragePermission();
-          return;
+          status = await PermissionService.instance.checkStoragePermission();
         }
-        // Permission not yet granted; leave allPdfs empty until granted
-        isLoadingAllFiles.value = false;
-        return;
+        if (!status.isGranted) return;
       }
 
-      final files = await FileService.instance.loadAllPdfs();
+      _allFilePaths = await FileService.instance.scanPdfPaths();
+      allPdfs.clear();
+      _allFilesLoaded = true;
+      await loadMoreAllFiles();
+      await _refreshRecentFromDb();
+      await _refreshFavouritesFromDb();
+    } catch (e) {
+      loadError.value = e.toString();
+    } finally {
+      isLoadingAllFiles.value = false;
+    }
+  }
+
+  Future<void> loadMoreAllFiles() async {
+    if (isLoadingMoreAllFiles.value || allPdfs.length >= _allFilePaths.length) {
+      return;
+    }
+
+    isLoadingMoreAllFiles.value = true;
+    try {
+      final files = await FileService.instance.loadPdfDocuments(
+        _allFilePaths,
+        startIndex: allPdfs.length,
+        limit: _allFilesBatchSize,
+      );
+      if (files.isEmpty) return;
+
       try {
         await AppDatabase.instance.upsertDocuments(files);
         final progress = await AppDatabase.instance.loadDocumentProgress();
@@ -104,7 +130,7 @@ class HomeController extends GetxController {
           for (final row in await AppDatabase.instance.loadFavouriteDocuments())
             row['file_path'] as String,
         };
-        allPdfs.assignAll(
+        allPdfs.addAll(
           files.map((file) {
             final saved = progress[file.filePath];
             final savedPageCount = saved?['pageCount'] ?? 0;
@@ -116,19 +142,17 @@ class HomeController extends GetxController {
             );
           }),
         );
-        _allFilesLoaded = true;
-        await _refreshRecentFromDb();
-        await _refreshFavouritesFromDb();
       } catch (_) {
-        allPdfs.assignAll(files);
-        _allFilesLoaded = true;
+        allPdfs.addAll(files);
       }
     } catch (e) {
       loadError.value = e.toString();
     } finally {
-      isLoadingAllFiles.value = false;
+      isLoadingMoreAllFiles.value = false;
     }
   }
+
+  bool get hasMoreAllFiles => allPdfs.length < _allFilePaths.length;
 
   /// Loads recent documents from the DB and updates [recentPdfs].
   /// This is fast (DB-only, no file system scan) and safe to call often.
@@ -370,13 +394,12 @@ class HomeController extends GetxController {
   void _onStorageGranted() {
     Get.snackbar(
       'Access Granted',
-      'Scanning PDF files from your device...',
+      'Open All files to browse PDFs on your device.',
       snackPosition: SnackPosition.BOTTOM,
       backgroundColor: appTheme.primaryColor,
       colorText: Colors.white,
       duration: const Duration(seconds: 2),
     );
-    loadDevicePdfs();
   }
 
   void _onCameraGranted() {
@@ -422,6 +445,7 @@ class HomeController extends GetxController {
     // without re-scanning device storage.
     Get.to(
       () => PdfViewerScreen(pdf: pdf),
+      binding: PdfViewerBinding(pdf: pdf),
     )?.then((_) async {
       await Future.wait([
         _refreshRecentFromDb(),

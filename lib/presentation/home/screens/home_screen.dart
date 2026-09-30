@@ -200,18 +200,50 @@ class HomeScreen extends GetWidget<HomeController> {
                     );
                   }
 
-                  return ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: pdfList.length,
-                    itemBuilder: (context, index) {
-                      final pdf = pdfList[index];
-                      return HomePdfCardWidget(
-                        pdf: pdf,
-                        onTap: () => controller.onPdfSelected(pdf),
-                        onMoreTap: () => controller.onPdfMoreOptions(pdf),
-                      );
-                    },
+                  return Column(
+                    children: [
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: pdfList.length,
+                        itemBuilder: (context, index) {
+                          final pdf = pdfList[index];
+                          return HomePdfCardWidget(
+                            pdf: pdf,
+                            onTap: () => controller.onPdfSelected(pdf),
+                            onMoreTap: () => controller.onPdfMoreOptions(pdf),
+                          );
+                        },
+                      ),
+                      if (controller.selectedTabIndex.value == 2 &&
+                          controller.hasMoreAllFiles)
+                        Padding(
+                          padding: EdgeInsets.only(top: 12.v, bottom: 8.v),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: controller.isLoadingMoreAllFiles.value
+                                  ? null
+                                  : controller.loadMoreAllFiles,
+                              icon: controller.isLoadingMoreAllFiles.value
+                                  ? SizedBox(
+                                      width: 16.adaptSize,
+                                      height: 16.adaptSize,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: appTheme.primaryColor,
+                                      ),
+                                    )
+                                  : const Icon(Icons.expand_more_rounded),
+                              label: Text(
+                                controller.isLoadingMoreAllFiles.value
+                                    ? 'Loading more files...'
+                                    : 'Show more',
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   );
                 }),
               ],

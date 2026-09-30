@@ -10,6 +10,7 @@ import 'package:smart_pdf_reader/presentation/global/controllers/reader_appearan
 import 'package:smart_pdf_reader/presentation/viewer/controller/pdf_viewer_controller.dart'
     as vc;
 import 'package:smart_pdf_reader/presentation/viewer/models/multi_page_capture_result.dart';
+import 'package:smart_pdf_reader/presentation/viewer/models/pdf_text_markup_style.dart';
 import 'package:smart_pdf_reader/presentation/viewer/screens/pdf_snipping_screen.dart';
 import 'package:smart_pdf_reader/presentation/viewer/widgets/annotation_toolbar.dart';
 import 'package:smart_pdf_reader/presentation/viewer/widgets/book_page_view.dart';
@@ -23,16 +24,30 @@ import 'package:smart_pdf_reader/presentation/viewer/widgets/viewer_search_resul
 import 'package:smart_pdf_reader/theme/theme_helper.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
-class PdfViewerScreen extends StatefulWidget {
+class PdfViewerScreen extends GetWidget<vc.PdfViewerController> {
   final PdfDocument pdf;
+
+  @override
+  String? get tag => pdf.filePath ?? pdf.title;
 
   const PdfViewerScreen({super.key, required this.pdf});
 
   @override
-  State<PdfViewerScreen> createState() => _PdfViewerScreenState();
+  Widget build(BuildContext context) =>
+      _PdfViewerContent(pdf: pdf, controller: controller);
 }
 
-class _PdfViewerScreenState extends State<PdfViewerScreen>
+class _PdfViewerContent extends StatefulWidget {
+  final PdfDocument pdf;
+  final vc.PdfViewerController controller;
+
+  const _PdfViewerContent({required this.pdf, required this.controller});
+
+  @override
+  State<_PdfViewerContent> createState() => _PdfViewerContentState();
+}
+
+class _PdfViewerContentState extends State<_PdfViewerContent>
     with SingleTickerProviderStateMixin {
   // ── Syncfusion PDF Viewer (widget-level controller, must stay in State) ────
   final PdfViewerController _pdfViewerController = PdfViewerController();
@@ -43,7 +58,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   final GlobalKey _viewerRepaintKey = GlobalKey();
 
   // ── Business-logic controller (GetX) ─────────────────────────────────────
-  late final vc.PdfViewerController _ctrl;
+  vc.PdfViewerController get _ctrl => widget.controller;
   late final ReaderAppearanceController _appearanceController;
 
   // ── Highlight & Text Selection ───────────────────────────────────────────
@@ -51,6 +66,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   OverlayEntry? _annotationToolbarOverlay;
   Annotation? _selectedAnnotation;
   late Color _selectedHighlightColor = appTheme.highlightYellow;
+  double _selectedHighlightOpacity = 0.45;
+  PdfTextMarkupStyle _selectedMarkupStyle = PdfTextMarkupStyle.highlight;
   bool _isHighlightMode = false;
 
   List<Color> get _highlightPalette => appTheme.highlightPalette;
@@ -81,15 +98,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   set _isSaving(bool v) => _ctrl.isSaving.value = v;
   Set<int> get _bookmarkedPages => _ctrl.bookmarkedPages;
   bool get _isCurrentPageBookmarked => _ctrl.isCurrentPageBookmarked;
-  String get _controllerTag => widget.pdf.filePath ?? widget.pdf.title;
-
   @override
   void initState() {
     super.initState();
-    _ctrl = Get.put(
-      vc.PdfViewerController(pdf: widget.pdf),
-      tag: _controllerTag,
-    );
     _appearanceController = Get.find<ReaderAppearanceController>();
     _loadBookmarks();
     _fabAnimController = AnimationController(
@@ -111,9 +122,6 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
     _ctrl.stopAutoScroll();
     _ctrl.saveViewerAnnotations(_pdfViewerController);
     _ctrl.detachSearchListener();
-    if (Get.isRegistered<vc.PdfViewerController>(tag: _controllerTag)) {
-      Get.delete<vc.PdfViewerController>(tag: _controllerTag);
-    }
     _searchController.dispose();
     _fabAnimController.dispose();
     super.dispose();
@@ -135,20 +143,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
     );
 
     if (_isHighlightMode) {
-      if (intersecting.isNotEmpty) {
-        _ctrl.removeHighlights(
-          viewerController: _pdfViewerController,
-          highlights: intersecting,
-          onSelectionCleared: _hideSelectionOverlay,
-        );
-      } else if (lines.isNotEmpty) {
-        _ctrl.addHighlight(
-          viewerController: _pdfViewerController,
-          lines: lines,
-          color: _selectedHighlightColor,
-          onSelectionCleared: _hideSelectionOverlay,
-        );
-      }
+      _showSelectionOverlay(details, lines, intersecting, isMarkupMode: true);
       return;
     }
 
@@ -158,8 +153,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   void _showSelectionOverlay(
     PdfTextSelectionChangedDetails details,
     List<PdfTextLine> lines,
-    List<HighlightAnnotation> intersectingHighlights,
-  ) {
+    List<HighlightAnnotation> intersectingHighlights, {
+    bool isMarkupMode = false,
+  }) {
     _hideSelectionOverlay();
     final region = details.globalSelectedRegion;
     if (region == null) return;
@@ -204,6 +200,16 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
                 hasHighlight: intersectingHighlights.isNotEmpty,
                 selectedColor: _selectedHighlightColor,
                 palette: _highlightPalette,
+                isMarkupMode: isMarkupMode,
+                markupLabel: _selectedMarkupStyle.label,
+                onApplyMarkup: () => _ctrl.addTextMarkup(
+                  viewerController: _pdfViewerController,
+                  lines: lines,
+                  color: _selectedHighlightColor,
+                  opacity: _selectedHighlightOpacity,
+                  style: _selectedMarkupStyle,
+                  onSelectionCleared: _hideSelectionOverlay,
+                ),
                 onRemoveHighlight: () => _ctrl.removeHighlights(
                   viewerController: _pdfViewerController,
                   highlights: intersectingHighlights,
@@ -211,10 +217,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
                 ),
                 onColorSelected: (color) {
                   _selectedHighlightColor = color;
-                  _ctrl.addHighlight(
+                  _ctrl.addTextMarkup(
                     viewerController: _pdfViewerController,
                     lines: lines,
                     color: color,
+                    opacity: _selectedHighlightOpacity,
+                    style: PdfTextMarkupStyle.highlight,
                     onSelectionCleared: _hideSelectionOverlay,
                   );
                 },
@@ -333,18 +341,34 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   }
 
   void _toggleHighlightMode() {
+    final isEnabling = !_isHighlightMode;
     setState(() {
       _isHighlightMode = !_isHighlightMode;
       if (_isHighlightMode) {
+        _selectedMarkupStyle = PdfTextMarkupStyle.highlight;
         _hideSelectionOverlay();
         _hideAnnotationToolbar();
       }
     });
+    if (isEnabling) _showPaletteBottomSheet();
+  }
+
+  void _openHighlightTools() {
+    if (!_isHighlightMode) {
+      setState(() {
+        _isHighlightMode = true;
+        _selectedMarkupStyle = PdfTextMarkupStyle.highlight;
+        _hideSelectionOverlay();
+        _hideAnnotationToolbar();
+      });
+    }
+    _showPaletteBottomSheet();
   }
 
   Widget _buildHighlightModeBanner() {
     return HighlightModeBanner(
       selectedColor: _selectedHighlightColor,
+      markupLabel: _selectedMarkupStyle.label,
       onColorTap: _showPaletteBottomSheet,
       onClose: () => setState(() => _isHighlightMode = false),
     );
@@ -354,9 +378,21 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
     HighlightPaletteSheet.show(
       context: context,
       selectedColor: _selectedHighlightColor,
-      palette: _highlightPalette,
+      selectedOpacity: _selectedHighlightOpacity,
+      selectedStyle: _selectedMarkupStyle,
       onColorSelected: (color) {
         setState(() => _selectedHighlightColor = color);
+      },
+      onOpacityChanged: (opacity) {
+        setState(() => _selectedHighlightOpacity = opacity);
+      },
+      onStyleSelected: (style) {
+        setState(() {
+          _selectedMarkupStyle = style;
+          _isHighlightMode = true;
+          _hideSelectionOverlay();
+          _hideAnnotationToolbar();
+        });
       },
     );
   }
@@ -549,11 +585,13 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  ViewerCaptureFab(
-                    scaleAnimation: _fabScaleAnim,
-                    animationController: _fabAnimController,
-                    isSaving: _isSaving,
-                    onPressed: _showCaptureMenuSheet,
+                  Obx(
+                    () => ViewerCaptureFab(
+                      scaleAnimation: _fabScaleAnim,
+                      animationController: _fabAnimController,
+                      isSaving: _isSaving,
+                      onPressed: _showCaptureMenuSheet,
+                    ),
                   ),
                 ],
               ),
@@ -812,60 +850,14 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
   }
 
   /// Saves the current full page directly to device gallery (Adobe Acrobat style).
-  Future<void> _saveCurrentPageToGallery() async {
-    if (_isSaving) return;
-    setState(() => _isSaving = true);
-
-    try {
-      final imageBytes = await _captureCleanPageImage();
-      if (imageBytes == null || !mounted) return;
-      await _ctrl.savePageToGallery(
-        imageBytes: imageBytes,
-        pageNumber: _currentPage > 0 ? _currentPage : 1,
-        onShare: () => _ctrl.shareScreenshot(imageBytes),
-      );
-    } catch (error) {
-      if (mounted) {
-        Get.snackbar(
-          'Save Failed',
-          error.toString(),
-          snackPosition: SnackPosition.BOTTOM,
-          backgroundColor: Colors.red.shade700,
-          colorText: Colors.white,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
+  Future<void> _saveCurrentPageToGallery() => _ctrl.captureAndSavePage(
+    pageNumber: _currentPage > 0 ? _currentPage : 1,
+    capturePage: _captureCleanPageImage,
+  );
 
   /// Captures the full screen as currently zoomed/visible.
-  Future<void> _takeScreenshot() async {
-    if (_isSaving) return;
-    setState(() => _isSaving = true);
-
-    try {
-      final imageBytes = await _captureViewportPixels();
-      if (imageBytes == null || !mounted) return;
-      await _ctrl.saveScreenshot(
-        imageBytes: imageBytes,
-        onShare: () => _ctrl.shareScreenshot(imageBytes),
-      );
-    } catch (error) {
-      if (mounted) {
-        Get.snackbar(
-          'Screenshot failed',
-          error.toString(),
-          snackPosition: SnackPosition.BOTTOM,
-          backgroundColor: Colors.red.shade700,
-          colorText: Colors.white,
-          duration: const Duration(seconds: 3),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
+  Future<void> _takeScreenshot() =>
+      _ctrl.captureAndSaveScreenshot(captureViewport: _captureViewportPixels);
 
   void _showCaptureMenuSheet() {
     ViewerCaptureMenuSheet.show(
@@ -1107,7 +1099,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen>
       currentPage: _currentPage,
       pageCount: _pageCount,
       isHighlightMode: _isHighlightMode,
-      onToggleHighlightMode: _toggleHighlightMode,
+      onToggleHighlightMode: _openHighlightTools,
       onMoreTools: _showMoreTools,
       onPreviousPage: () {
         if (_isBookMode) {
